@@ -50,7 +50,7 @@ def readmission(aFileName):
                 if not line.startswith('QGC WPL 110'):
                     raise Exception('File is not supported WP version')
             elif i == 1:
-                print "Dropped 1st Coordinates"
+                print "First Coordinates suppose to be home location"
             else:
                 linearray = line.split('\t')
                 lat = float(linearray[8])  # Latitude of Waypoint
@@ -261,7 +261,7 @@ def InitializeLanding(*args):
     time.sleep(10)
 
 
-def InitializeORBSLAM():
+def InitializeORBSLAM(*args):
     """
     Initialize ORB Slam
     """
@@ -398,11 +398,12 @@ class Echo(protocol.Protocol):
         header, info = HeaderExtractor(data)
         global ORB
         global ORBComplete
+        global CURRENTLAYER
         if header == "shutdown":
             self.transport.write("Server Shutdown Initiated")
             reactor.stop()
         elif header == "KEYFRAME" or header == "LOC":
-            self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading))
+            self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading, CURRENTLAYER))
         elif header == "land":
             self.transport.write("Landing Initialized")
             InitializeLanding()
@@ -444,20 +445,6 @@ vehicle.send_mavlink(MSG)
 ConditionYaw(Target_Heading, False)
 time.sleep(1)
 print "Heading Corrected, Initializing Echo Server"
-# while not vehicle.heading == Target_Heading:
-#     # Check if vehicle heading is target heading before moving on
-#     if vehicle.heading > Target_Heading:
-#         if abs(vehicle.heading - Target_Heading) > 180:
-#             ConditionYaw(1, 1, True)
-#         else:
-#             ConditionYaw(1, -1, True)
-#     elif vehicle.heading < Target_Heading:
-#         if abs(vehicle.heading - Target_Heading) > 180:
-#             ConditionYaw(1, -1, True)
-#         else:
-#             ConditionYaw(1, 1, True)
-#     print "Heading ", vehicle.heading
-#     time.sleep(1)
 keyboard.hook_key('w', InitializeLanding)
 factory = protocol.ServerFactory()
 factory.protocol = Echo

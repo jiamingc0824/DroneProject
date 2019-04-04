@@ -30,7 +30,7 @@ ORB = True
 ORBComplete = False
 Target_Heading = 135  # Target heading of drone
 CURRENTLAYER = 2
-vehicle.parameters['WPNAV_SPEED'] = 200
+vehicle.parameters['WPNAV_SPEED'] = 50
 vehicle.parameters['ACRO_YAW_P'] = 1
 vehicle.parameters['ATC_ACCEL_Y_MAX'] = 9000
 vehicle.parameters['WP_YAW_BEHAVIOR'] = 0
@@ -269,9 +269,9 @@ def InitializeORBSLAM(*args):
     global loop
     while True:
         SendLocation(0, -1, 0)
-        time.sleep(4)
+        time.sleep(2)
         SendLocation(0, 1, 0)
-        time.sleep(4)
+        time.sleep(2)
         if not ORB or not loop:
             print vehicle.location.local_frame
             ORBComplete = True
@@ -388,7 +388,7 @@ class Echo(protocol.Protocol):
                     self.transport.write("PATHEND://")
                 self.PathCompletedCheck = 0
             else:
-                self.transport.write("LOC://{}@{}@{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.heading))
+                self.transport.write("LOC://{}@{}@{}@{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.heading, CURRENTLAYER))
             self.PathCompletedCheck += 1
         self.looping_call = task.LoopingCall(broadcast_msg)
         self.looping_call.start(1)
@@ -403,7 +403,7 @@ class Echo(protocol.Protocol):
             self.transport.write("Server Shutdown Initiated")
             reactor.stop()
         elif header == "KEYFRAME" or header == "LOC":
-            self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading, CURRENTLAYER))
+            self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading))
         elif header == "land":
             self.transport.write("Landing Initialized")
             InitializeLanding()
@@ -418,8 +418,8 @@ class Echo(protocol.Protocol):
             self.threads.append(Movement)
             Movement.start()
         elif header == "INIT":
-            if info == "SERV@KEYFRAME":
-                ORB = False
+            # if info == "SERV@KEYFRAME":
+                # ORB = False
             self.transport.write("{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon))
         else:
             self.transport.write("Invalid")

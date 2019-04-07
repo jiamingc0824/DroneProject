@@ -268,10 +268,7 @@ def InitializeORBSLAM(*args):
     global ORBComplete
     global loop
     while True:
-        SendLocation(0, -1, 0)
-        time.sleep(2)
-        SendLocation(0, 1, 0)
-        time.sleep(2)
+        SendLocation(0, 10000, 0)
         if not ORB or not loop:
             print vehicle.location.local_frame
             ORBComplete = True

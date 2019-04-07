@@ -12,7 +12,7 @@ import threading
 import socket
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--connect', default="com4")
+parser.add_argument('--connect', default="/dev/ttyUSB0")
 args = parser.parse_args()
 
 # Connect to the Vehicle
@@ -31,7 +31,7 @@ MSG = vehicle.message_factory.set_position_target_local_ned_encode(
 loop = True
 ORB = True
 ORBComplete = False
-Target_Heading = 261  # Target heading of drone
+Target_Heading = 335  # Target heading of drone
 CURRENTLAYER = 2
 vehicle.parameters['WPNAV_SPEED'] = 50
 
@@ -372,7 +372,7 @@ class Echo(protocol.Protocol):
     PathCompletedCheck = 0
 
     def connectionMade(self):
-        self.waypoint = readmission("test.waypoints")
+        self.waypoint = readmission("one.waypoints")
         self.transport.write("WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + ",".join(str(x) for x in self.waypoint))
 
         def broadcast_msg():
@@ -411,14 +411,14 @@ class Echo(protocol.Protocol):
             self.threads.append(Movement)
             Movement.start()
         elif header == "INIT":
-            # if info == "SERV@KEYFRAME":
-            #     ORB = False
+            if info == "SERV@KEYFRAME":
+                ORB = False
             self.transport.write("{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon))
         else:
             self.transport.write("Invalid")
 
 
-ArmAndTakeoff(2)
+ArmAndTakeoff(1.5)
 # Initialize the takeoff sequence to 2m
 print "Take off complete"
 time.sleep(5)

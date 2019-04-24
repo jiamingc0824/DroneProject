@@ -1,20 +1,29 @@
-from dronekit import connect, VehicleMode, LocationGlobalRelative
+#!/usr/bin/env python
+
+from dronekit import connect, VehicleMode, LocationGlobalRelative, Battery
+from pymavlink import mavutil
 from twisted.internet import reactor, protocol, task
 from twisted.internet.protocol import Factory
-from pymavlink import mavutil
-from array import *
-import threading
 import time
-import dronekit_sitl
 import keyboard
+import argparse
+import dronekit_sitl
 import math
+import threading
 import socket
 
-print "Start simulator (SITL)"
-sitl = dronekit_sitl.start_default(2.9423677, 101.8729529)
-connection_string = sitl.connection_string()
-print("Connecting to vehicle on: %s" % (connection_string,))
-vehicle = connect(connection_string, wait_ready=False)
+# sitl = dronekit_sitl.start_default(2.9423677, 101.8729529)
+# connection_string = sitl.connection_string()
+# print("Connecting to vehicle on: %s" % (connection_string,))
+# vehicle = connect(connection_string, wait_ready=False)
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--connect', default="/dev/ttyUSB0")
+args = parser.parse_args()
+
+# Connect to the Vehicle
+print 'Connecting to vehicle on: %s' % args.connect
+vehicle = connect(args.connect, baud=57600, wait_ready=False)
 vehicle.wait_ready(True, timeout=240)
 MSG = vehicle.message_factory.set_position_target_local_ned_encode(
     0,
@@ -26,69 +35,15 @@ MSG = vehicle.message_factory.set_position_target_local_ned_encode(
     0, 0, 0,
     0, 0)
 loop = True
+stop = True
 ORB = True
 ORBComplete = False
-Target_Heading = 135  # Target heading of drone
+Target_Heading = 330  # Target heading of drone
 CURRENTLAYER = 2
 vehicle.parameters['WPNAV_SPEED'] = 50
-vehicle.parameters['ACRO_YAW_P'] = 1
-vehicle.parameters['ATC_ACCEL_Y_MAX'] = 9000
-vehicle.parameters['WP_YAW_BEHAVIOR'] = 0
-
-
-def readmission(aFileName):
-    """
-    Load a mission from a file into a list.
-
-    :param aFileName : Filename of the waypoints
-    """
-    print "Reading mission from file: %s\n" % aFileName
-    missionlist = []
-    with open(aFileName) as f:
-        for i, line in enumerate(f):
-            if i == 0:
-                if not line.startswith('QGC WPL 110'):
-                    raise Exception('File is not supported WP version')
-            elif i == 1:
-                print "First Coordinates suppose to be home location"
-            else:
-                linearray = line.split('\t')
-                lat = float(linearray[8])  # Latitude of Waypoint
-                lon = float(linearray[9])  # Longitude of Waypoint
-                missionlist.append("{}@{}".format(lat, lon))
-    return missionlist
-
-
-def HeadingParser(string):
-    """
-    Parse heading data from service layer
-    """
-    return map(int, string)
-
-
-def PathParser(string):
-    """
-    Parse path data from service layer
-    """
-    stringarray = []
-    distance = []
-    heading = []
-    bearing = []
-    stringarray = string.split('@')
-    altitude = map(int, stringarray[0])
-    distance = map(float, stringarray[1][1:len(stringarray[1]) - 1].split('|'))
-    heading = map(int, stringarray[2][1:len(stringarray[2]) - 1].split('|'))
-    bearing = stringarray[3][1:len(stringarray[3]) - 1].split('|')
-    return altitude, distance, heading, bearing
-
-
-def HeaderExtractor(string):
-    """
-    Extract message header obtained from TCP
-    """
-    stringarray = []
-    stringarray = string.split("://")
-    return stringarray[0], stringarray[1]
+# vehicle.parameters['ACRO_YAW_P'] = 1
+# vehicle.parameters['ATC_ACCEL_Y_MAX'] = 9000
+# vehicle.parameters['WP_YAW_BEHAVIOR'] = 0
 
 
 def ArmAndTakeoff(aTargetAltitude):
@@ -228,6 +183,139 @@ def CaluculateRemainingDistance(CurrentN, CurrentE, Target, PreviousN=0, Previou
     return Target - math.sqrt(abs(((CurrentN - PreviousN) ** 2) + ((CurrentE - PreviousE) ** 2)))
 
 
+def ThreadingSendLocation(altitude, path, heading, bearing):
+    """
+    Handles sending drone displacement component on another thread to prevent server from being
+    blocked on the main thread
+    ThreadingSendLocation(altitude, path, heading, bearing)
+
+    :param altitude : Array of Altitude
+    :param path     : Array of Path
+    :param heading  : Array of Heading
+    :param bearing  : Array of GPS coordinated seperated by @
+    """
+    global loop
+    global CURRENTLAYER
+    global Target_Heading
+    global stop
+    PreE = 0
+    PreN = 0
+    iterator = 0
+    Echo.Block = False
+    Coordinates = []
+    if len(path) >= 1:
+        Coordinates = map(float, bearing[iterator].split(','))
+        PreE = vehicle.location.local_frame.east
+        PreN = vehicle.location.local_frame.north
+        # if not loop:
+        #     break
+        if abs(Target_Heading - vehicle.heading) > 1 and abs(Target_Heading - vehicle.heading) < 359:
+            ConditionYaw(Target_Heading, False)
+        if (CURRENTLAYER != altitude):
+            if CURRENTLAYER > altitude:
+                SendLocation(0, 0, 1)
+            elif CURRENTLAYER < altitude:
+                SendLocation(0, 0, -1)
+            time.sleep(5)
+            CURRENTLAYER = altitude
+        if GetStraight(vehicle.heading, heading[iterator]):
+            SendLocation(path[0], 0, 0)
+            print "Moving Forward"
+        elif not GetStraight(vehicle.heading, heading[iterator]):
+            if GetLeftOrRight(vehicle.heading, heading[iterator]):
+                print "Going Right"
+                if (path[0] > 0):
+                    SendLocation(0, path[0] * -1, 0)
+                elif (path[0] < 0):
+                    SendLocation(0, path[0], 0)
+            elif not GetLeftOrRight(vehicle.heading, heading[iterator]):
+                print "Going Left"
+                SendLocation(0, path[0], 0)
+        while CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, path[0], PreN, PreE) > 1:
+            print "Remaining Distance: ", CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, path[0], PreN, PreE)
+            print "Heading: ", vehicle.heading
+            print "Local:", vehicle.location.local_frame
+            print "GPS: ", vehicle.location.global_frame
+            print "Lat:{}, Lon:{}".format(Coordinates[0], Coordinates[1])
+            print "Air Speed: {} Ground Speed:{}".format(vehicle.airspeed, vehicle.groundspeed)
+            print "Vehicle Distance From Home: ", vehicle.location.local_frame.distance_home()
+            time.sleep(0.5)
+            if not loop or not stop:
+                stop = False
+                break
+        time.sleep(1)
+        Coordinates = []
+        iterator += 1
+    Echo.Block = True
+
+
+def readmission(aFileName):
+    """
+    Load a mission from a file into a list.
+
+    :param aFileName : Filename of the waypoints
+    """
+    print "Reading mission from file: %s\n" % aFileName
+    missionlist = []
+    with open(aFileName) as f:
+        for i, line in enumerate(f):
+            if i == 0:
+                if not line.startswith('QGC WPL 110'):
+                    raise Exception('File is not supported WP version')
+            elif i == 1:
+                print "First Coordinates suppose to be home location"
+            else:
+                linearray = line.split('\t')
+                lat = float(linearray[8])  # Latitude of Waypoint
+                lon = float(linearray[9])  # Longitude of Waypoint
+                missionlist.append("{}@{}".format(lat, lon))
+    return missionlist
+
+
+def HeadingParser(string):
+    """
+    Parse heading data from service layer
+    """
+    return map(int, string)
+
+
+def PathParser(string):
+    """
+    Parse path data from service layer
+    """
+    stringarray = []
+    distance = []
+    heading = []
+    bearing = []
+    stringarray = string.split('@')
+    altitude = map(int, stringarray[0])
+    try:
+        distance = map(float, stringarray[1][1:len(stringarray[1]) - 1].split('|'))
+    except Exception as e:
+        print e
+        distance = []        
+    try:
+        heading = map(int, stringarray[2][1:len(stringarray[2]) - 1].split('|'))
+    except Exception as e:
+        print e
+        heading = []        
+    try:
+        bearing = stringarray[3][1:len(stringarray[3]) - 1].split('|')
+    except Exception as e:
+        print e
+        bearing = []       
+    return altitude, distance, heading, bearing
+
+
+def HeaderExtractor(string):
+    """
+    Extract message header obtained from TCP
+    """
+    stringarray = []
+    stringarray = string.split("://")
+    return stringarray[0], stringarray[1]
+
+
 def GetStraight(Current, Target):
     Angle = abs(Current - Target)
     if Angle < 3 or Angle > 357:
@@ -255,10 +343,6 @@ def InitializeLanding(*args):
     """
     global loop
     loop = False
-    UpdateVelocity2(0, 0, 0)
-    vehicle.mode = VehicleMode("LAND")
-    vehicle.send_mavlink(MSG)
-    time.sleep(10)
 
 
 def InitializeORBSLAM(*args):
@@ -268,11 +352,20 @@ def InitializeORBSLAM(*args):
     global ORBComplete
     global loop
     while True:
-        SendLocation(0, 10000, 0)
         if not ORB or not loop:
             print vehicle.location.local_frame
             ORBComplete = True
             break
+
+
+def StopMovement(*args):
+    """
+    Stop the Drone From Moving
+    """
+    global stop
+    stop = False
+    UpdateVelocity2(0, 0, 0)
+    vehicle.send_mavlink(MSG)
 
 
 def StopORBSlam(*args):
@@ -283,90 +376,44 @@ def StopORBSlam(*args):
     ORB = False
 
 
-def ThreadingConditionYaw(rotation):
-    """
-    Handles  drone yaw movement on another thread to prevent server from being blocked
-    on the main thread
-    ThreadingConditionYaw(rotation)
-
-    :param rotation : Absolute angle of drone rotation
-    """
-    global Target_Heading
-    Target_Heading = rotation
-    Echo.blocked = False
-    ConditionYaw(rotation)
-    Echo.blocked = True
-
-
-def ThreadingSendLocation(altitude, path, heading, bearing):
-    """
-    Handles sending drone displacement component on another thread to prevent server from being
-    blocked on the main thread
-    ThreadingSendLocation(altitude, path, heading, bearing)
-
-    :param altitude : Array of Altitude
-    :param path     : Array of Path
-    :param heading  : Array of Heading
-    :param bearing  : Array of GPS coordinated seperated by @
-    """
-    global loop
-    global CURRENTLAYER
-    global Target_Heading
-    PreE = 0
-    PreN = 0
-    iterator = 0
-    Echo.Block = False
-    Coordinates = []
-    for x in path:
-        Coordinates = map(float, bearing[iterator].split(','))
-        PreE = vehicle.location.local_frame.east
-        PreN = vehicle.location.local_frame.north
-        if not loop:
-            break
-        if abs(Target_Heading - vehicle.heading) > 1 and abs(Target_Heading - vehicle.heading) < 359:
-            ConditionYaw(Target_Heading, False)
-        if (CURRENTLAYER != altitude):
-            if CURRENTLAYER > altitude:
-                SendLocation(0, 0, 1)
-            elif CURRENTLAYER < altitude:
-                SendLocation(0, 0, -1)
-            time.sleep(5)
-            CURRENTLAYER = altitude
-        if GetStraight(vehicle.heading, heading[iterator]):
-            SendLocation(x, 0, 0)
-            print "Moving Forward"
-        elif not GetStraight(vehicle.heading, heading[iterator]):
-            if GetLeftOrRight(vehicle.heading, heading[iterator]):
-                print "Going Right"
-                if (x > 0):
-                    SendLocation(0, x * -1, 0)
-                elif (x < 0):
-                    SendLocation(0, x, 0)
-            elif not GetLeftOrRight(vehicle.heading, heading[iterator]):
-                print "Going Left"
-                SendLocation(0, x, 0)
-        while CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, x, PreN, PreE) > 1:
-            print "Remaining Distance: ", CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, x, PreN, PreE)
-            print "Heading: ", vehicle.heading
-            print "Local:", vehicle.location.local_frame
-            print "GPS: ", vehicle.location.global_frame
-            print "Lat:{}, Lon:{}".format(Coordinates[0], Coordinates[1])
-            print "Air Speed: {} Ground Speed:{}".format(vehicle.airspeed, vehicle.groundspeed)
-            print "Vehicle Distance From Home: ", vehicle.location.local_frame.distance_home()
-            time.sleep(1)
-            if not loop:
-                break
-        time.sleep(1)
-        Coordinates = []
-        iterator += 1
-    Echo.Block = True
-
-
 def ShutDown(*args):
     global loop
     loop = False
     reactor.stop()
     keyboard.unhook('l')
+
+
+def WritePath(alt, path, heading, bearing):
+    f = open("dronepathlog.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("Flight Level: ")
+    for i in alt:
+        f.write(str(i) + "|")
+    f.write("\nPath: ")
+    for i in path:
+        f.write(str(i) + "|")
+    f.write("\nHeading: ")
+    for i in heading:
+        f.write(str(i) + "|")
+    f.write("\nBearing: ")
+    for i in bearing:
+        f.write(str(i) + "|")
+    f.close
+
+
+def WriteScale(value):
+    f = open("dronepathlog.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("Scale" + value + "\n")
+
+
+def WriteGPS(lat, lon):
+    f = open("GPS.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("GPS" + "lat: " + lat + "lon" + lon + "\n")
 
 
 class Echo(protocol.Protocol):
@@ -376,19 +423,22 @@ class Echo(protocol.Protocol):
     PathCompletedCheck = 0
 
     def connectionMade(self):
-        self.waypoint = readmission("test.waypoints")
-        self.transport.write("WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + "," + ",".join(str(x) for x in self.waypoint))
+        self.waypoint = readmission("one.waypoints")
+        print "WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + ","+ ",".join(str(x) for x in self.waypoint)
+        self.transport.write("WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + ","+ ",".join(str(x) for x in self.waypoint))
 
         def broadcast_msg():
-            if self.PathCompletedCheck == 3:
+            if self.PathCompletedCheck == 10:
                 if self.Block:
                     self.transport.write("PATHEND://")
+                    print "Requesting Path"
                 self.PathCompletedCheck = 0
             else:
                 self.transport.write("LOC://{}@{}@{}@{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.heading, CURRENTLAYER))
             self.PathCompletedCheck += 1
+        WriteGPS(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon)
         self.looping_call = task.LoopingCall(broadcast_msg)
-        self.looping_call.start(1)
+        self.looping_call.start(0.1)
 
     def dataReceived(self, data):
         print data
@@ -396,57 +446,46 @@ class Echo(protocol.Protocol):
         global ORB
         global ORBComplete
         global CURRENTLAYER
-        if header == "shutdown":
-            self.transport.write("Server Shutdown Initiated")
-            reactor.stop()
-        elif header == "KEYFRAME" or header == "LOC":
-            self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading, CURRENTLAYER))
-        elif header == "land":
-            self.transport.write("Landing Initialized")
-            InitializeLanding()
+        if header == "KEYFRAME" or header == "LOC":
+            self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{},{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading, CURRENTLAYER))
+            print "KEYFRAME://{}@{}@{},{}@{}@{},{},{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading, CURRENTLAYER)
+            print "GPS HDOP: ", vehicle.gps_0.eph        
         elif header == "TURN" and self.Block and ORBComplete:
             rotation = HeadingParser(info)
-            Heading = threading.Thread(target=ThreadingConditionYaw, args=(rotation))
-            self.threads.append(Heading)
-            Heading.start()
+            print rotation
         elif header == "PATH" and self.Block and ORBComplete:
             alt, path, heading, bearing = PathParser(info)
-            Movement = threading.Thread(target=ThreadingSendLocation, args=(alt, path, heading, bearing))
-            self.threads.append(Movement)
-            Movement.start()
+            print path
+            # Movement = threading.Thread(target=ThreadingSendLocation, args=(alt, path, heading, bearing))
+            # self.threads.append(Movement)
+            WritePath(alt, path, heading, bearing)
         elif header == "INIT":
-            # if info == "SERV@KEYFRAME":
-                # ORB = False
+            if info == "SERV@KEYFRAME":
+                ORB = False
             self.transport.write("{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon))
+        elif header == "K":
+            WriteScale(info)
         else:
             self.transport.write("Invalid")
 
-
-ArmAndTakeoff(1)
-# Initialize the takeoff sequence to 1m
-print "Take off complete"
-time.sleep(1)
-# Hover for 5 seconds
+# ArmAndTakeoff(1)
 while not vehicle.home_location:
     cmds = vehicle.commands
     cmds.download()
-    cmds.wait_ready()
+    cmds.wait_ready(timeout=180)
     if not vehicle.home_location:
         print "Home Location Not Obtained Yet"
-
-print "Obtained Home Location, Initializing Heading Correction"
-print "Home:", vehicle.home_location
-# A movement command must be sent before updating the drone Yaw angle
 UpdateVelocity2(0, 0, 0)
-vehicle.send_mavlink(MSG)
-ConditionYaw(Target_Heading, False)
-time.sleep(1)
-print "Heading Corrected, Initializing Echo Server"
-keyboard.hook_key('w', InitializeLanding)
+# vehicle.send_mavlink(MSG)
+# ConditionYaw(Target_Heading, False)
+# time.sleep(1)
+print "Home:", vehicle.home_location
+print "Initializing Echo Server"
 factory = protocol.ServerFactory()
 factory.protocol = Echo
 ORBInit = threading.Thread(target=InitializeORBSLAM)
 ORBInit.start()
+keyboard.hook_key('p', StopMovement)
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     sock.connect(('localhost', 8080))
@@ -459,22 +498,7 @@ except Exception as e:
 reactor.listenTCP(8081, factory)
 keyboard.hook_key('l', ShutDown)
 reactor.run()
-
-# while loop:
-#     print vehicle.location.global_frame.lat
-#     print vehicle.location.global_frame.lon
-#     print "Global ", vehicle.location.global_frame
-#     print "Heading", vehicle.heading
-#     print vehicle.battery
-#     print "Local:", vehicle.location.local_frame
-#     print "Air Speed: {} Ground Speed:{}".format(vehicle.airspeed, vehicle.groundspeed)
-#     print "Vehicle Travelled: ", vehicle.location.local_frame.distance_home()
-#     print "Remaining Distance: ", CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, 80)
-#     time.sleep(1)
-
-vehicle.mode = VehicleMode("LAND")
-# Close vehicle object before exiting script
+print "Local:", vehicle.location.local_frame
+print "Heading:", vehicle.heading
+# Close vehicle object
 vehicle.close()
-# Shut down simulator
-sitl.stop()
-print("Completed")

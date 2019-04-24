@@ -10,6 +10,7 @@ import argparse
 import math
 import threading
 import socket
+import datetime
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--connect', default="/dev/ttyUSB0")
@@ -29,9 +30,11 @@ MSG = vehicle.message_factory.set_position_target_local_ned_encode(
     0, 0, 0,
     0, 0)
 loop = True
+stop = True
 ORB = True
 ORBComplete = False
-Target_Heading = 335  # Target heading of drone
+Target_Heading = 17  # Target heading of drone
+Target_Altitude = 3 # Targest Altitude of Drone
 CURRENTLAYER = 2
 vehicle.parameters['WPNAV_SPEED'] = 50
 
@@ -76,9 +79,21 @@ def PathParser(string):
     bearing = []
     stringarray = string.split('@')
     altitude = map(int, stringarray[0])
-    distance = map(float, stringarray[1][1:len(stringarray[1]) - 1].split('|'))
-    heading = map(int, stringarray[2][1:len(stringarray[2]) - 1].split('|'))
-    bearing = stringarray[3][1:len(stringarray[3]) - 1].split('|')
+    try:
+        distance = map(float, stringarray[1][1:len(stringarray[1]) - 1].split('|'))
+    except Exception as e:
+        print e
+        distance = []        
+    try:
+        heading = map(int, stringarray[2][1:len(stringarray[2]) - 1].split('|'))
+    except Exception as e:
+        print e
+        heading = []        
+    try:
+        bearing = stringarray[3][1:len(stringarray[3]) - 1].split('|')
+    except Exception as e:
+        print e
+        bearing = []
     return altitude, distance, heading, bearing
 
 
@@ -221,7 +236,7 @@ def CaluculateRemainingDistance(CurrentN, CurrentE, Target, PreviousN=0, Previou
 
 def GetStraight(Current, Target):
     Angle = abs(Current - Target)
-    if Angle < 3 or Angle > 357:
+    if Angle < 8 or Angle > 352:
         return True
     else:
         return False
@@ -234,9 +249,9 @@ def GetLeftOrRight(Current, Target):
     Right = Current + 90
     if Right > 360:
         Right -= 360
-    if abs(Left - Target) < 5:
+    if abs(Left - Target) < 8:
         return True
-    elif abs(Right - Target) < 5:
+    elif abs(Right - Target) < 8:
         return False
 
 
@@ -267,6 +282,16 @@ def InitializeORBSLAM(*args):
             print vehicle.location.local_frame
             ORBComplete = True
             break
+
+
+def StopMovement(*args):
+    """
+    Stop the Drone From Moving
+    """
+    global stop
+    stop = False
+    UpdateVelocity(0, 0, 0)
+    vehicle.send_mavlink(MSG)
 
 
 def StopORBSlam(*args):
@@ -306,49 +331,58 @@ def ThreadingSendLocation(altitude, path, heading, bearing):
     global loop
     global CURRENTLAYER
     global Target_Heading
+    global stop
     PreE = 0
     PreN = 0
     iterator = 0
     Echo.Block = False
     Coordinates = []
-    for x in path:
+    # for x in path:
+    if len(path) >= 1:
         Coordinates = map(float, bearing[iterator].split(','))
         PreE = vehicle.location.local_frame.east
         PreN = vehicle.location.local_frame.north
-        if not loop:
-            break
-        if abs(Target_Heading - vehicle.heading) > 1 and abs(Target_Heading - vehicle.heading) < 359:
-            ConditionYaw(Target_Heading, False)
-        if (CURRENTLAYER != altitude):
-            if CURRENTLAYER > altitude:
-                SendLocation(0, 0, 1)
-            elif CURRENTLAYER < altitude:
-                SendLocation(0, 0, -1)
-            time.sleep(5)
-            CURRENTLAYER = altitude
+        # if not loop:
+        #     break
+        # if abs(Target_Heading - vehicle.heading) > 1 and abs(Target_Heading - vehicle.heading) < 359:
+        #     ConditionYaw(Target_Heading, False)
+        # if (CURRENTLAYER != altitude):
+        #     if CURRENTLAYER > altitude:
+        #         SendLocation(0, 0, 1)
+        #     elif CURRENTLAYER < altitude:
+        #         SendLocation(0, 0, -1)
+        #     time.sleep(5)
+        #     CURRENTLAYER = altitude
+        if ((abs(vehicle.location.local_frame.down) - Target_Altitude) > 0.2):
+            print "Checking Altitude"
+            SendLocation(0, 0, (Target_Altitude + vehicle.location.local_frame.down))
+            time.sleep(0.5)
         if GetStraight(vehicle.heading, heading[iterator]):
-            SendLocation(x, 0, 0)
+            SendLocation(path[0], 0, 0)
             print "Moving Forward"
         elif not GetStraight(vehicle.heading, heading[iterator]):
             if GetLeftOrRight(vehicle.heading, heading[iterator]):
                 print "Going Right"
-                if (x > 0):
-                    SendLocation(0, x * -1, 0)
-                elif (x < 0):
-                    SendLocation(0, x, 0)
+                if (path[0] > 0):
+                    SendLocation(0, path[0] * -1, 0)
+                elif (path[0] < 0):
+                    SendLocation(0, path[0], 0)
             elif not GetLeftOrRight(vehicle.heading, heading[iterator]):
                 print "Going Left"
-                SendLocation(0, x, 0)
-        while CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, x, PreN, PreE) > 1:
-            print "Remaining Distance: ", CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, x, PreN, PreE)
+                SendLocation(0, path[0], 0)
+        while CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, path[0], PreN, PreE) > 0.15:
+            print "Path:", path
+            print "Remaining Distance: ", CaluculateRemainingDistance(vehicle.location.local_frame.north, vehicle.location.local_frame.east, path[0], PreN, PreE)
             print "Heading: ", vehicle.heading
             print "Local:", vehicle.location.local_frame
             print "GPS: ", vehicle.location.global_frame
             print "Lat:{}, Lon:{}".format(Coordinates[0], Coordinates[1])
             print "Air Speed: {} Ground Speed:{}".format(vehicle.airspeed, vehicle.groundspeed)
             print "Vehicle Distance From Home: ", vehicle.location.local_frame.distance_home()
-            time.sleep(1)
-            if not loop:
+            print "GPS HDOP: ", vehicle.gps_0.eph
+            time.sleep(0.5)
+            if not loop or not stop:
+                stop = False
                 break
         time.sleep(1)
         Coordinates = []
@@ -365,6 +399,32 @@ def ShutDown(*args):
     keyboard.unhook('l')
 
 
+def WritePath(alt, path, heading, bearing):
+    f = open("dronepathlog.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("Flight Level: ")
+    for i in alt:
+        f.write(str(i) + "|")
+    f.write("\nPath: ")
+    for i in path:
+        f.write(str(i) + "|")
+    f.write("\nHeading: ")
+    for i in heading:
+        f.write(str(i) + "|")
+    f.write("\nBearing: ")
+    for i in bearing:
+        f.write(str(i) + "|")
+    f.close
+
+
+def WriteScale(value):
+    f = open("dronepathlog.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("Scale" + value + "\n")
+
+
 class Echo(protocol.Protocol):
     threads = []
     Block = True
@@ -373,7 +433,7 @@ class Echo(protocol.Protocol):
 
     def connectionMade(self):
         self.waypoint = readmission("one.waypoints")
-        self.transport.write("WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + ",".join(str(x) for x in self.waypoint))
+        self.transport.write("WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + "," + ",".join(str(x) for x in self.waypoint))
 
         def broadcast_msg():
             if self.PathCompletedCheck == 3:
@@ -381,7 +441,7 @@ class Echo(protocol.Protocol):
                     self.transport.write("PATHEND://")
                 self.PathCompletedCheck = 0
             else:
-                self.transport.write("LOC://{}@{}@{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.heading))
+                self.transport.write("LOC://{}@{}@{}@{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.heading, CURRENTLAYER))
             self.PathCompletedCheck += 1
         self.looping_call = task.LoopingCall(broadcast_msg)
         self.looping_call.start(1)
@@ -397,6 +457,7 @@ class Echo(protocol.Protocol):
             reactor.stop()
         elif header == "KEYFRAME" or header == "LOC":
             self.transport.write("KEYFRAME://{}@{}@{},{}@{}@{},{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, vehicle.location.global_relative_frame.alt, vehicle.location.local_frame.north, vehicle.location.local_frame.east, vehicle.location.local_frame.down, vehicle.heading, CURRENTLAYER))
+            print "GPS HDOP: ", vehicle.gps_0.eph
         elif header == "land":
             self.transport.write("Landing Initialized")
             InitializeLanding()
@@ -410,16 +471,19 @@ class Echo(protocol.Protocol):
             Movement = threading.Thread(target=ThreadingSendLocation, args=(alt, path, heading, bearing))
             self.threads.append(Movement)
             Movement.start()
+            WritePath(alt, path, heading, bearing)
         elif header == "INIT":
             if info == "SERV@KEYFRAME":
                 ORB = False
             self.transport.write("{}@{}".format(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon))
+        elif header == "K":
+            WriteScale(info)
         else:
             self.transport.write("Invalid")
 
 
-ArmAndTakeoff(1.5)
-# Initialize the takeoff sequence to 2m
+ArmAndTakeoff(Target_Altitude)
+# Initialize the takeoff sequence to 3m
 print "Take off complete"
 time.sleep(5)
 # Hover for 5 seconds
@@ -455,18 +519,6 @@ except Exception as e:
 reactor.listenTCP(8081, factory)
 keyboard.hook_key('l', ShutDown)
 reactor.run()
-
-
-# while loop:
-#     # print vehicle.location.global_frame.lat
-#     # print vehicle.location.global_frame.lon
-#     # print "Global ", vehicle.location.global_relative_frame
-#     print "Heading", vehicle.heading
-#     print "Local", vehicle.location.local_frame
-#     print "Battery:", vehicle.battery
-#     print "\n"
-#     time.sleep(1)
-
 
 print("Now let's land")
 vehicle.mode = VehicleMode("LAND")

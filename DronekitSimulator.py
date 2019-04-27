@@ -9,6 +9,7 @@ import dronekit_sitl
 import keyboard
 import math
 import socket
+import datetime
 
 print "Start simulator (SITL)"
 sitl = dronekit_sitl.start_default(2.9423677, 101.8729529)
@@ -380,6 +381,7 @@ class Echo(protocol.Protocol):
         self.transport.write("WP://" + "{}@{}".format(vehicle.home_location.lat, vehicle.home_location.lon) + "," + ",".join(str(x) for x in self.waypoint))
 
         def broadcast_msg():
+            print vehicle.battery.voltage
             if self.PathCompletedCheck == 3:
                 if self.Block:
                     self.transport.write("PATHEND://")
@@ -445,20 +447,25 @@ print "Heading Corrected, Initializing Echo Server"
 keyboard.hook_key('w', InitializeLanding)
 factory = protocol.ServerFactory()
 factory.protocol = Echo
-ORBInit = threading.Thread(target=InitializeORBSLAM)
-ORBInit.start()
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    sock.connect(('localhost', 8080))
-    print "Drone Init Completed, Notifying Service Layer"
-    data = "droneserver"
-    sock.sendall(data)
-    sock.close()
-except Exception as e:
-    print e
-reactor.listenTCP(8081, factory)
-keyboard.hook_key('l', ShutDown)
-reactor.run()
+# ORBInit = threading.Thread(target=InitializeORBSLAM)
+# ORBInit.start()
+# sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# try:
+#     sock.connect(('localhost', 8080))
+#     print "Drone Init Completed, Notifying Service Layer"
+#     data = "droneserver"
+#     sock.sendall(data)
+#     sock.close()
+# except Exception as e:
+#     print e
+# reactor.listenTCP(8081, factory)
+# keyboard.hook_key('l', ShutDown)
+# reactor.run()
+for x in range(2):
+    f = open("YawandBattery.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("Battery: " + str(vehicle.battery) + "\n")
 
 # while loop:
 #     print vehicle.location.global_frame.lat

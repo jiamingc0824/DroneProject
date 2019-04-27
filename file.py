@@ -3,7 +3,7 @@ import datetime
 
 currentDT = datetime.datetime.now()
 
-f = open("GPS.txt", "a+")
+f = open("YawandBattery.txt", "a+")
 print (str(currentDT))
 g = "Stuff" 
 f.write(str(currentDT) + "\n")

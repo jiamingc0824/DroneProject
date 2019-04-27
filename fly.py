@@ -33,7 +33,7 @@ loop = True
 stop = True
 ORB = True
 ORBComplete = False
-Target_Heading = 17  # Target heading of drone
+Target_Heading = 22  # Target heading of drone
 Target_Altitude = 3 # Targest Altitude of Drone
 CURRENTLAYER = 2
 vehicle.parameters['WPNAV_SPEED'] = 50
@@ -355,7 +355,7 @@ def ThreadingSendLocation(altitude, path, heading, bearing):
         #     CURRENTLAYER = altitude
         if ((abs(vehicle.location.local_frame.down) - Target_Altitude) > 0.2):
             print "Checking Altitude"
-            SendLocation(0, 0, (Target_Altitude + vehicle.location.local_frame.down))
+            SendLocation(0, 0, -1 * (Target_Altitude + vehicle.location.local_frame.down))
             time.sleep(0.5)
         if GetStraight(vehicle.heading, heading[iterator]):
             SendLocation(path[0], 0, 0)
@@ -400,9 +400,10 @@ def ShutDown(*args):
 
 
 def WritePath(alt, path, heading, bearing):
-    f = open("dronepathlog.txt", "a+")
+    f = open("DroneFlightData.txt", "a+")
     currentDT = datetime.datetime.now()
     f.write(str(currentDT) + "\n")
+    f.write("Pathfinding data" + "\n")
     f.write("Flight Level: ")
     for i in alt:
         f.write(str(i) + "|")
@@ -415,6 +416,11 @@ def WritePath(alt, path, heading, bearing):
     f.write("\nBearing: ")
     for i in bearing:
         f.write(str(i) + "|")
+    f.write("\n")
+    f.write("Drone State" + "\n")
+    f.write("Heading" + str(vehicle.heading) + "\n")
+    f.write("Drone NED:" + "\n" + "North: " + str(vehicle.location.local_frame.north) + "East: " + str(vehicle.location.local_frame.east) + "Down:" + str(vehicle.location.local_frame.down) + "\n")
+    f.write("Drone GPS Location:" + "\n" + "Lat: " + str(vehicle.location.global_frame.lat) + "Lon: " + str(vehicle.location.global_frame.lon) + "\n")
     f.close
 
 

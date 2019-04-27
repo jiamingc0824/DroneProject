@@ -31,7 +31,10 @@ MSG = vehicle.message_factory.set_position_target_local_ned_encode(
     0, 0)
 loop = True
 stop = True
-
+ACRO = 1
+ACCEL = 9000
+vehicle.parameters['ACRO_YAW_P'] = ACRO  # set to 1 for second test # 4.5 tested
+vehicle.parameters['ATC_ACCEL_Y_MAX'] = ACCEL  # set to 9000 for second test  # 2700 Tested
 
 def ArmAndTakeoff(aTargetAltitude):
     """
@@ -142,10 +145,10 @@ def ConditionYaw(_heading, rotation=1, relative=False):
         is_relative,  # Relative offset 1, absolute angle 0
         0, 0, 0)  # Not Used
     vehicle.send_mavlink(_yaw)
-    while not (abs(vehicle.heading - _heading) <= 0.05):
-        # Check if vehicle heading is target heading before moving on
-        print "Heading:", vehicle.heading
-        time.sleep(1)
+    # while not (abs(vehicle.heading - _heading) <= 0.05) :
+    #     # Check if vehicle heading is target heading before moving on
+    #     print "Heading:", vehicle.heading
+    #     time.sleep(1)
 
 
 def InitializeLanding(*args):
@@ -175,26 +178,34 @@ def WriteData():
     currentDT = datetime.datetime.now()
     f.write(str(currentDT) + "\n")
     f.write("Heading: " + str(vehicle.heading) + "\n")
-    f.write("Battery: " + str(vehicle.battery) + "\n")
+    f.write("Battery: " + str(vehicle.battery) + "\n\n")
 
 
-ArmAndTakeoff(2)
+ArmAndTakeoff(5)
+f = open("YawandBattery.txt", "a+")
+currentDT = datetime.datetime.now()
+f.write(str(currentDT) + "\n")
+f.write("Hover for 5 Mins to test flight time \n")
 # Initialize the takeoff sequence to 2m
-time.sleep(5)
-# Hover for 5 seconds
-UpdateVelocity(0, 0, 0)
-vehicle.send_mavlink(MSG)
-if vehicle.heading > 180:
-    ConditionYaw(180, -1, True)
-elif vehicle.heading <180:
-    ConditionYaw(180, 1, True)
-time.sleep(5)
+# time.sleep(10)
+# Hover for 10 seconds
+keyboard.hook_key('w', InitializeLanding)
+# print vehicle.heading
+# UpdateVelocity(0, 0, 0)
+# vehicle.send_mavlink(MSG)
+# ConditionYaw(180, 1, True)
+# f = open("YawandBattery.txt", "a+")
+# currentDT = datetime.datetime.now()
+# f.write(str(currentDT) + "\n")
+# f.write("ACRO_YAW_P set to " + str(ACRO) + "ATC_ACCEL_Y_MAX set to " + str(ACCEL) + "\n")
 
 for x in range(10):
-    WriteData()
     print "Heading", vehicle.heading
-    print vehicle.battery
-    time.sleep(1)
+    f = open("YawandBattery.txt", "a+")
+    currentDT = datetime.datetime.now()
+    f.write(str(currentDT) + "\n")
+    f.write("30 Second Have Passed \n")
+    time.sleep(30)
 
 print("Now let's land")
 vehicle.mode = VehicleMode("LAND")
